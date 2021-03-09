@@ -60,60 +60,19 @@ def rename_default_branch(
     repo_name: str,
     current: str,
     target: str,
-    delete_current: bool = False,
 ) -> None:
-    # First, look up the SHA for the current default branch
-    r = session.get(
-        GITHUB_API_URL + f"/repos/{repo_name}/git/refs/heads/{current}"
+    r = session.post(
+        GITHUB_API_URL + f"/repos/{repo_name}/branches/{current}/rename",
+        json={"new_name": target},
     )
+    if r.status_code == 403:
+        # This happens if the repo is read-only
+        logger.info(f"Forbidden")
+        return
     if r.status_code == 404:
         logger.info(f"no branch named {current} on {repo_name}")
         return
-    elif r.status_code == 409:
-        logger.info(f"no branches found in empty repo {repo_name}")
-        return
-    r.raise_for_status()
-    sha = r.json()["object"]["sha"]
-
-    # Try to create a new branch with the name given by target
-    r = session.post(
-        GITHUB_API_URL + f"/repos/{repo_name}/git/refs",
-        json={"ref": f"refs/heads/{target}", "sha": sha},
-    )
-    if r.status_code == 422:
-        logger.info(f"branch {target} already exists on {repo_name}")
-
-        # If this branch, make sure that it has the right
-        r = session.get(
-            GITHUB_API_URL + f"/repos/{repo_name}/git/refs/heads/{target}"
-        )
-        r.raise_for_status()
-        if r.json()["object"]["sha"] != sha:
-            logger.warning(
-                f"the SHA of branch {target} on {repo_name} does not match "
-                f"{current}"
-            )
-            return
-
     else:
-        # This happens if the repo is read-only
-        if r.status_code == 403:
-            return
-
-        r.raise_for_status()
-
-    # Rename the default branch
-    r = session.patch(
-        GITHUB_API_URL + f"/repos/{repo_name}",
-        json={"name": repo_name.split("/")[1], "default_branch": target},
-    )
-    r.raise_for_status()
-
-    # Delete the existing branch if requested
-    if delete_current:
-        r = session.delete(
-            GITHUB_API_URL + f"/repos/{repo_name}/git/refs/heads/{current}"
-        )
         r.raise_for_status()
 
 
@@ -149,12 +108,6 @@ def rename_default_branch(
     multiple=True,
     type=str,
 )
-@click.option(
-    "--delete",
-    "-d",
-    help="Should the current default branch be deleted?",
-    is_flag=True,
-)
 @click.option("--version", help="Print the version number", is_flag=True)
 def _main(
     token: Optional[str],
@@ -162,7 +115,6 @@ def _main(
     target: str,
     repo: List[str],
     pattern: List[str],
-    delete: bool,
     version: bool,
 ) -> None:
 
@@ -194,7 +146,7 @@ def _main(
             for r in repo:
                 bar.set_description_str(r)
                 rename_default_branch(
-                    session, r, current, target, delete_current=delete
+                    session, r, current, target
                 )
                 bar.update()
 
